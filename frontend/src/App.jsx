@@ -8,7 +8,7 @@ import Analytics from "./pages/Analytics";
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename='/ps3'>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<PortfolioOverview />} />
@@ -23,3 +23,4 @@ function App() {
 }
 
 export default App;
+
