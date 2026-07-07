@@ -5,7 +5,15 @@ Read this first if resuming a session. Master index is at `../PROGRESS.md`, full
 
 Ports: backend 8001, frontend 5174 (see root PROGRESS.md port table — do not collide with PS4 on 8000/5173).
 
-## Status: IN PROGRESS
+## Status: ✅ DONE (verified by orchestrating session 2026-07-07)
+
+Frontend was actually further along than this file's own checklist indicated when the
+background agent was cut off by a session limit — all 5 pages exist and work. Verified live via
+headless Playwright across all 5 routes (`/`, `/health-card/MSME00001`, `/simulate`, `/compare`,
+`/analytics`) with **zero console/page errors**, plus visually reviewed screenshots — the radar
+chart health card (the spec's "star feature") renders correctly with real backend data (score
+643/1000, Good, 5-dimensional radar, sub-score breakdown with trend charts). Both servers
+confirmed running: backend 8001, frontend 5174.
 
 ### Backend
 - [x] venv created (py -3.11) at `backend/venv`
