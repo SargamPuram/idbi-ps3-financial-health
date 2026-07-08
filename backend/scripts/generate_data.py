@@ -112,6 +112,16 @@ BUSINESS_SUFFIX = {
 MSME_CLASS = ["Micro", "Small", "Medium"]
 MSME_CLASS_WEIGHTS = [0.50, 0.35, 0.15]
 
+# Sub-sectors where water consumption is a genuinely meaningful operational signal
+# (dyeing/washing for textiles, wash-down + process water for food processing, guest
+# rooms/laundry/kitchens for hospitality) -- named explicitly in the PS-explainer session.
+WATER_INTENSIVE_SUBSECTORS = {"Textiles", "Food Processing", "Hospitality"}
+
+# Sectors where fleet/logistics fuel cost is a genuinely meaningful operational signal
+# (own or hired transport for goods movement) -- named in the PS-explainer session as
+# relevant "for logistics/trading businesses specifically".
+FUEL_RELEVANT_SECTORS = {"Logistics", "Trading"}
+
 STATE_CODES = ["MH", "DL", "KA", "TN", "WB", "TG", "GJ", "RJ", "UP", "PB", "MP", "JH", "AS", "CG", "UK"]
 
 
@@ -255,7 +265,7 @@ for i in range(N_MSME):
     existing_debt_amount = float(base_turnover * 12 * np.random.uniform(0.1, 0.6) * (1.3 - 0.5 * credit_q))
     cash_flow_series = np.clip(np.random.normal(0.9 + 0.6 * credit_q, 0.18, N_MONTHS), 0.4, 2.5)
 
-    # ================= Utility =================
+    # ================= Utility: electricity, water =================
     elec_base = np.random.uniform(500, 8000) * class_scale * (1.5 if sector == "Manufacturing" else 0.6)
     elec_trend_drift = (ops_q - 0.45) * 0.02
     elec_series = []
@@ -263,7 +273,40 @@ for i in range(N_MSME):
     for m in range(N_MONTHS):
         x = max(x * (1 + elec_trend_drift + np.random.normal(0, 0.04)), 20)
         elec_series.append(x)
-    water_bill_series = np.clip(np.random.normal(1200 + 800 * class_scale / 4, 400, N_MONTHS), 200, None)
+    elec_series = np.array(elec_series)
+
+    # Water consumption -- bundled with the same utility-bill data source/has_utility flag
+    # as electricity. Only genuinely elevated *and* trend-bearing (correlated with ops_q,
+    # same mechanism as electricity) for water-intensive sub-sectors; everyone else still
+    # gets a plausible small bill but with essentially no trend signal, so the scoring
+    # engine doesn't treat an irrelevant sector's water bill as a meaningful operational cue.
+    water_intensive = sub_sector in WATER_INTENSIVE_SUBSECTORS
+    water_base = np.random.uniform(300, 2200) * class_scale * (2.6 if water_intensive else 0.7)
+    water_trend_drift = ((ops_q - 0.45) * 0.018) if water_intensive else np.random.normal(0, 0.003)
+    water_bill_series = []
+    w = water_base
+    for m in range(N_MONTHS):
+        w = max(w * (1 + water_trend_drift + np.random.normal(0, 0.05)), 50)
+        water_bill_series.append(w)
+    water_bill_series = np.array(water_bill_series)
+
+    # ================= Fuel costs (fleet/logistics diesel-petrol spend) =================
+    # Genuinely separate data source from the electricity/water utility bill (e.g. a
+    # fleet fuel-card ledger), so it gets its own presence flag rather than riding on
+    # has_utility. Present far more often, and at much higher scale, for Logistics/Trading
+    # (own or hired transport); rare for Services, occasional for Manufacturing (captive
+    # delivery fleet).
+    fuel_presence_p = {"Logistics": 0.85, "Trading": 0.55, "Manufacturing": 0.20, "Services": 0.08}[sector]
+    has_fuel_log = np.random.random() < fuel_presence_p
+    fuel_sector_scale = {"Logistics": 2.5, "Trading": 1.2, "Manufacturing": 0.8, "Services": 0.4}[sector]
+    fuel_base = np.random.uniform(2000, 15000) * class_scale * fuel_sector_scale
+    fuel_trend_drift = (ops_q - 0.45) * 0.022
+    fuel_expense_series = []
+    u = fuel_base
+    for m in range(N_MONTHS):
+        u = max(u * (1 + fuel_trend_drift + np.random.normal(0, 0.05)), 100)
+        fuel_expense_series.append(u)
+    fuel_expense_series = np.array(fuel_expense_series)
 
     # Assessment date: spread over the last ~9 months, weighted toward more recent
     # (so "recent assessments" / "monthly volume trend" views look realistic)
@@ -294,11 +337,19 @@ for i in range(N_MSME):
         "electricity_trend_label": (
             "Growing" if elec_trend_drift > 0.004 else ("Declining" if elec_trend_drift < -0.004 else "Stable")
         ) if has_utility else None,
+        "water_trend_label": (
+            "Growing" if water_trend_drift > 0.004 else ("Declining" if water_trend_drift < -0.004 else "Stable")
+        ) if (has_utility and water_intensive) else None,
+        "fuel_trend_label": (
+            "Growing" if fuel_trend_drift > 0.004 else ("Declining" if fuel_trend_drift < -0.004 else "Stable")
+        ) if has_fuel_log else None,
+        "is_water_intensive_subsector": water_intensive,
         "has_gst": has_gst,
         "has_upi": True,
         "has_epfo": has_epfo,
         "has_banking": has_banking,
         "has_utility": has_utility,
+        "has_fuel_log": has_fuel_log,
         "_true_quality": round(true_quality, 4),  # kept for internal validation only
     })
 
@@ -326,6 +377,7 @@ for i in range(N_MSME):
             "cash_flow_ratio": round(cash_flow_series[m], 4) if has_banking else np.nan,
             "electricity_consumption": round(elec_series[m], 1) if has_utility else np.nan,
             "water_bill": round(water_bill_series[m], 2) if has_utility else np.nan,
+            "fuel_expense": round(fuel_expense_series[m], 2) if has_fuel_log else np.nan,
         })
 
 profiles_df = pd.DataFrame(profiles)
@@ -341,7 +393,12 @@ print(f"Wrote {len(monthly_df)} monthly records -> {monthly_path}")
 print(f"Sparse MSMEs (missing >=1 of GST/EPFO/Banking): "
       f"{int((~profiles_df[['has_gst','has_epfo','has_banking']].all(axis=1)).sum())} "
       f"({(~profiles_df[['has_gst','has_epfo','has_banking']].all(axis=1)).mean() * 100:.1f}%)")
-print(profiles_df[["has_gst", "has_epfo", "has_banking", "has_utility"]].mean())
+print(profiles_df[["has_gst", "has_epfo", "has_banking", "has_utility", "has_fuel_log"]].mean())
+print(f"Water-intensive sub-sectors (Textiles/Food Processing/Hospitality): "
+      f"{int(profiles_df['is_water_intensive_subsector'].sum())} "
+      f"({profiles_df['is_water_intensive_subsector'].mean() * 100:.1f}%)")
+print("Fuel log presence by sector:")
+print(profiles_df.groupby("sector")["has_fuel_log"].mean().round(3))
 
 # --------------------------------------------------------------------------
 # Precompute sector benchmark reference distributions

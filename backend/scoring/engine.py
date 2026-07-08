@@ -38,6 +38,17 @@ import math
 
 import numpy as np
 
+# Sector/sub-sector conditioning for the water and fuel-cost signals, mirroring the same
+# sets used in scripts/generate_data.py to build the synthetic portfolio. Kept as a
+# separate copy (rather than importing the generator) because this module must stay a
+# pure function of a features dict, independent of how those features were produced --
+# a live /assess call supplies sector/sub_sector directly without ever touching the
+# generator. Water is a genuine operational signal only for water-intensive sub-sectors
+# (textiles, food processing, hospitality); fuel cost only for logistics/trading, where
+# fleet/transport spend is a meaningful proxy of business activity.
+WATER_INTENSIVE_SUBSECTORS = {"Textiles", "Food Processing", "Hospitality"}
+FUEL_RELEVANT_SECTORS = {"Logistics", "Trading"}
+
 DIMENSION_WEIGHTS = {
     "revenue_health": 30,
     "operational_health": 20,
@@ -69,6 +80,8 @@ FACTOR_LABELS = {
     "ops_epfo_regularity": "EPFO contribution regularity",
     "ops_employee_growth": "Employee headcount trend",
     "ops_electricity_trend": "Electricity consumption trend",
+    "ops_water_trend": "Water consumption trend",
+    "ops_fuel_cost_trend": "Fuel cost trend",
     "ops_years_stability": "Years-in-business stability",
     "credit_repayment": "Loan repayment history",
     "credit_bounce": "Cheque bounce discipline",
@@ -91,6 +104,8 @@ SUGGESTION_TEMPLATES = {
     "ops_epfo_regularity": "Improve EPFO contribution regularity for registered employees",
     "ops_employee_growth": "Stabilize or grow EPFO-registered headcount",
     "ops_electricity_trend": "Stabilize utility consumption — sharp declines can signal reduced production",
+    "ops_water_trend": "Stabilize water consumption — sharp declines can signal reduced production/occupancy",
+    "ops_fuel_cost_trend": "Track fleet/logistics fuel spend against delivery volume growth to avoid sharp declines",
     "ops_years_stability": "Continued operating history will steadily improve this factor",
     "credit_repayment": "Improve on-time EMI/loan repayment discipline",
     "credit_bounce": "Reduce cheque bounces — maintain adequate buffer balance before due dates",
@@ -145,6 +160,7 @@ def build_features(profile: dict, monthly) -> dict:
     monthly = monthly.sort_values("month_index")
     f = {
         "sector": profile["sector"],
+        "sub_sector": profile.get("sub_sector"),
         "city_tier": int(profile["city_tier"]),
         "years_in_business": int(profile["years_in_business"]),
         "employee_count": int(profile["employee_count"]),
@@ -153,6 +169,7 @@ def build_features(profile: dict, monthly) -> dict:
         "has_epfo": bool(profile["has_epfo"]),
         "has_banking": bool(profile["has_banking"]),
         "has_utility": bool(profile["has_utility"]),
+        "has_fuel_log": bool(profile.get("has_fuel_log", False)),
     }
 
     # ---- Revenue Health inputs (GST) ----
@@ -188,6 +205,24 @@ def build_features(profile: dict, monthly) -> dict:
         f["electricity_trend_slope_pct"] = linreg_slope(elec) / max(np.mean(elec), 1.0)
     else:
         f["electricity_trend_slope_pct"] = None
+
+    # Water consumption trend -- only scored where it's a genuine signal (water-intensive
+    # sub-sectors); data exists for other sub-sectors too but is intentionally not fed
+    # into scoring there, since it's mostly noise for e.g. an IT Services MSME.
+    if f["has_utility"] and f.get("sub_sector") in WATER_INTENSIVE_SUBSECTORS and "water_bill" in monthly.columns:
+        water = monthly["water_bill"].to_numpy(dtype=float)
+        f["water_trend_slope_pct"] = linreg_slope(water) / max(np.nanmean(water), 1.0) if not np.all(np.isnan(water)) else None
+    else:
+        f["water_trend_slope_pct"] = None
+
+    # Fuel cost trend -- only scored for sectors where fleet/transport spend is a
+    # meaningful operational proxy (Logistics/Trading), and only when the data source
+    # (fuel-card/expense ledger) is actually available for this MSME.
+    if f["has_fuel_log"] and f["sector"] in FUEL_RELEVANT_SECTORS and "fuel_expense" in monthly.columns:
+        fuel = monthly["fuel_expense"].to_numpy(dtype=float)
+        f["fuel_trend_slope_pct"] = linreg_slope(fuel) / max(np.nanmean(fuel), 1.0) if not np.all(np.isnan(fuel)) else None
+    else:
+        f["fuel_trend_slope_pct"] = None
 
     # ---- Credit Discipline inputs (Banking / Account Aggregator) ----
     if f["has_banking"]:
@@ -262,6 +297,18 @@ def _operational_health(f):
         components["ops_electricity_trend"] = (elec_score, f["electricity_trend_slope_pct"], "pct_per_month")
         weighted_sum += elec_score * 0.20
         weight_total += 0.20
+
+    if f.get("water_trend_slope_pct") is not None:
+        water_score = _clip_score((f["water_trend_slope_pct"] + 0.018) / 0.036 * 100)
+        components["ops_water_trend"] = (water_score, f["water_trend_slope_pct"], "pct_per_month")
+        weighted_sum += water_score * 0.15
+        weight_total += 0.15
+
+    if f.get("fuel_trend_slope_pct") is not None:
+        fuel_score = _clip_score((f["fuel_trend_slope_pct"] + 0.022) / 0.044 * 100)
+        components["ops_fuel_cost_trend"] = (fuel_score, f["fuel_trend_slope_pct"], "pct_per_month")
+        weighted_sum += fuel_score * 0.15
+        weight_total += 0.15
 
     raw = weighted_sum / weight_total if weight_total > 0 else years_score
     return raw, components
@@ -412,6 +459,10 @@ def score_from_features(f: dict, sector_benchmarks: dict) -> dict:
             "epfo": bool(f.get("has_epfo")),
             "account_aggregator": bool(f.get("has_banking")),
             "utility": bool(f.get("has_utility")),
+            # Fuel-cost log is a genuine but sector-conditional 6th source (only meaningful
+            # for Logistics/Trading) -- deliberately NOT counted in `sources`/confidence
+            # above, since its absence for e.g. an IT Services MSME isn't a real gap.
+            "fuel_log": bool(f.get("has_fuel_log")),
         },
         "dimensions": dimensions_out,
         "strengths": strengths,

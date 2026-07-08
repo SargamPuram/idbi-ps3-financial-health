@@ -23,7 +23,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scoring.engine import build_features, score_from_features, DIMENSION_WEIGHTS, DIMENSION_LABELS
+from scoring.engine import (
+    build_features, score_from_features, DIMENSION_WEIGHTS, DIMENSION_LABELS,
+    WATER_INTENSIVE_SUBSECTORS, FUEL_RELEVANT_SECTORS,
+)
 from app.schemas import AssessRequest, SimulateRequest
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -160,6 +163,8 @@ def monthly_series_for_frontend(monthly: pd.DataFrame) -> dict:
         "employee_count_trend": col("employee_count_monthly"),
         "epfo_contribution_status": col("epfo_contribution_status"),
         "electricity_trend": col("electricity_consumption"),
+        "water_bill_trend": col("water_bill"),
+        "fuel_expense_trend": col("fuel_expense"),
         "loan_repayment_status": col("loan_repayment_status"),
         "cheque_bounce_flag": col("cheque_bounce_flag"),
         "bank_balance_trend": col("bank_balance"),
@@ -321,10 +326,12 @@ def assess(req: AssessRequest):
             turnover_proxy = max(d["employee_count"], 1) * 45000  # revenue-per-employee heuristic fallback
 
     features = {
-        "sector": d["sector"], "city_tier": d["city_tier"], "years_in_business": d["years_in_business"],
+        "sector": d["sector"], "sub_sector": d.get("sub_sector"), "city_tier": d["city_tier"],
+        "years_in_business": d["years_in_business"],
         "employee_count": d["employee_count"],
         "has_gst": d["has_gst"], "has_upi": True, "has_epfo": d["has_epfo"],
         "has_banking": d["has_banking"], "has_utility": d["has_utility"],
+        "has_fuel_log": d["has_fuel_log"],
         "turnover_proxy_avg": turnover_proxy,
         "digital_ratio_avg": d["digital_transaction_ratio_avg"],
         "upi_volume_growth_rate": d["upi_volume_growth_rate"],
@@ -354,6 +361,12 @@ def assess(req: AssessRequest):
         features.update({"employee_growth_rate": None, "epfo_contribution_regularity_pct": None})
 
     features["electricity_trend_slope_pct"] = d["electricity_trend_slope_pct"] if d["has_utility"] else None
+    features["water_trend_slope_pct"] = (
+        d["water_trend_slope_pct"] if d["has_utility"] and d.get("sub_sector") in WATER_INTENSIVE_SUBSECTORS else None
+    )
+    features["fuel_trend_slope_pct"] = (
+        d["fuel_trend_slope_pct"] if d["has_fuel_log"] and d["sector"] in FUEL_RELEVANT_SECTORS else None
+    )
 
     if d["has_banking"]:
         features.update({

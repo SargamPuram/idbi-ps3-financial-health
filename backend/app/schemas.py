@@ -37,6 +37,14 @@ class AssessRequest(BaseModel):
     # --- Utility block (feeds Operational Health) ---
     has_utility: bool = True
     electricity_trend_slope_pct: Optional[float] = 0.005
+    # Water only scores as a signal for water-intensive sub-sectors (Textiles, Food
+    # Processing, Hospitality) -- ignored otherwise, matching the batch-generated cohort.
+    water_trend_slope_pct: Optional[float] = None
+
+    # --- Fuel cost block (separate source from the utility bill; feeds Operational
+    # Health only for Logistics/Trading, where fleet/transport spend is meaningful) ---
+    has_fuel_log: bool = False
+    fuel_trend_slope_pct: Optional[float] = None
 
     # --- Banking / Account Aggregator / Credit Discipline block ---
     has_banking: bool = True
