@@ -461,10 +461,11 @@ def compare(ids: str = Query(..., description="Comma-separated MSME IDs, e.g. MS
     for msme_id in msme_ids:
         profile = get_profile_or_404(msme_id)
         row = get_scored_or_404(msme_id)
+        features = build_features_for(msme_id)
         rec = credit_recommendation(
             int(row["overall_score"]), row["risk_category"],
-            build_features_for(msme_id)["turnover_proxy_avg"],
-            profile.get("existing_debt_amount"), row["confidence_level"],
+            features["turnover_proxy_avg"],
+            features.get("existing_debt_amount"), row["confidence_level"],
         )
         cards.append({
             "msme_id": msme_id,

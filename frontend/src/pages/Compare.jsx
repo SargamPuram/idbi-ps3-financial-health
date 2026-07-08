@@ -21,6 +21,7 @@ export default function Compare() {
     const clean = ids.map((i) => i.trim()).filter(Boolean);
     if (clean.length === 0) return;
     setError(null);
+    setData(null);
     endpoints
       .compare(clean)
       .then((res) => setData(res.data))
@@ -43,6 +44,11 @@ export default function Compare() {
     setSelected([...selected, ""]);
   };
 
+  const removeSlot = (idx) => {
+    if (selected.length <= 1) return;
+    setSelected(selected.filter((_, i) => i !== idx));
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -54,15 +60,42 @@ export default function Compare() {
       <div className="card">
         <div className="flex items-center gap-12" style={{ flexWrap: "wrap" }}>
           {selected.map((id, idx) => (
-            <input
-              key={idx}
-              className="input"
-              list="recent-msmes-compare"
-              value={id}
-              onChange={(e) => updateSlot(idx, e.target.value)}
-              placeholder={`MSME ID #${idx + 1}`}
-              style={{ width: 160 }}
-            />
+            <div key={idx} className="flex items-center gap-8">
+              <input
+                className="input"
+                list="recent-msmes-compare"
+                value={id}
+                onChange={(e) => updateSlot(idx, e.target.value)}
+                placeholder={`MSME ID #${idx + 1}`}
+                style={{ width: 160 }}
+              />
+              {selected.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeSlot(idx)}
+                  aria-label={`Remove MSME slot ${idx + 1}`}
+                  title="Remove this slot"
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    border: "1px solid var(--card-border)",
+                    background: "var(--card-alt)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 13,
+                    lineHeight: 1,
+                    padding: 0,
+                    cursor: "pointer",
+                    color: "var(--text-muted)",
+                    flexShrink: 0,
+                  }}
+                >
+                  &times;
+                </button>
+              )}
+            </div>
           ))}
           <datalist id="recent-msmes-compare">
             {recentIds.map((rid) => (
@@ -89,7 +122,10 @@ export default function Compare() {
 
       {data && (
         <>
-          <div className="grid mt-24" style={{ gridTemplateColumns: `repeat(${data.msmes.length}, 1fr)` }}>
+          <div
+            className="grid mt-24"
+            style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(230px, 100%), 1fr))" }}
+          >
             {data.msmes.map((m, i) => (
               <div className="card" key={m.msme_id}>
                 <div className="flex justify-between items-start">
