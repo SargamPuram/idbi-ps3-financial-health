@@ -6,3 +6,4 @@ numpy==1.26.4
 scipy==1.13.1
 faker==33.1.0
 python-multipart==0.0.19
+pytest==8.3.4
